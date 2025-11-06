@@ -288,8 +288,8 @@ class MKVRenameAssistant:
             meta = self.extract_metadata()
             self.info_text.insert(tk.END, f"Risoluzione rilevata: {meta.get('resolution', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Formato: {meta.get('video_format', 'N/A')}\n")
-            # Per REMUX non mostra compressore (non sono compressi)
-            compressor_value = meta.get('compressor', 'Non applicabile' if meta.get('type') == 'REMUX' else 'N/A')
+            # Per REMUX e WEB-DL puro non mostra compressore (non sono compressi)
+            compressor_value = meta.get('compressor', 'Non applicabile' if meta.get('type') in ['REMUX', 'WEBDL'] else 'N/A')
             self.info_text.insert(tk.END, f"Compressore: {compressor_value}\n")
             self.info_text.insert(tk.END, f"Tipo rilevato: {meta.get('type', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Source rilevato: {meta.get('source', 'N/A')}\n")
@@ -417,8 +417,8 @@ class MKVRenameAssistant:
                 meta['source'] = 'DVD'
                 meta['type'] = 'DVDRIP'
         
-        # Se è REMUX, rimuovi il compressore (i REMUX non sono compressi)
-        if meta.get('type') == 'REMUX' and 'compressor' in meta:
+        # Rimuovi compressore per file non compressi (REMUX e WEB-DL puro)
+        if meta.get('type') in ['REMUX', 'WEBDL'] and 'compressor' in meta:
             del meta['compressor']
         
         # Audio - prendi il primo track audio
