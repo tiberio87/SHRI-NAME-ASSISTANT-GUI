@@ -377,14 +377,17 @@ class MKVRenameAssistant:
             # PRIORITÀ 1: Controlla se è una serie TV (S01E01) - quasi sempre WEB
             if self._is_tv_series(basename):
                 meta['source'] = 'WEB'
-                # Se ha marker espliciti di WEB-DL/DLMux o writing library encoded
-                if (any(keyword in filename_upper for keyword in ['WEB-DL', 'WEBDL', 'WEB.DL', 'DLMUX', 'WEBMUX']) and
-                    self._has_encoded_writing_library()):
+                # Prima controlla marker espliciti WEBRip
+                if any(keyword in filename_upper for keyword in ['WEBRIP', 'WEB.RIP', 'WEB-RIP']):
                     meta['type'] = 'WEBRIP'
-                elif any(keyword in filename_upper for keyword in ['WEBRIP', 'WEB.RIP', 'WEB-RIP']):
+                # Poi controlla se ha writing library encoded (indica WEBRip)
+                elif self._has_encoded_writing_library():
                     meta['type'] = 'WEBRIP'
+                # Se ha marker WEB-DL ma NO writing library, è WEB-DL puro
+                elif any(keyword in filename_upper for keyword in ['WEB-DL', 'WEBDL', 'WEB.DL', 'DLMUX', 'WEBMUX']):
+                    meta['type'] = 'WEBDL'
                 else:
-                    # Default per serie TV è WEB-DL
+                    # Default per serie TV senza marker è WEB-DL
                     meta['type'] = 'WEBDL'
             # PRIORITÀ 2: Marker espliciti WEB-DL/WEBRip (per film)
             elif any(keyword in filename_upper for keyword in ['WEB-DL', 'WEBDL', 'WEB.DL', 'DLMUX', 'WEBMUX']):
