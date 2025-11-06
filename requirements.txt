@@ -1,2 +1,2 @@
-pymediainfo>=6.0.0# Core dependencies per produzione
+# Core dependencies per produzione
 pymediainfo>=6.0.0
