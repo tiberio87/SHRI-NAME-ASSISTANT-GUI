@@ -287,7 +287,8 @@ class MKVRenameAssistant:
         try:
             meta = self.extract_metadata()
             self.info_text.insert(tk.END, f"Risoluzione rilevata: {meta.get('resolution', 'N/A')}\n")
-            self.info_text.insert(tk.END, f"Codec video rilevato: {meta.get('video_codec', 'N/A')}\n")
+            self.info_text.insert(tk.END, f"Formato: {meta.get('video_format', 'N/A')}\n")
+            self.info_text.insert(tk.END, f"Compressore: {meta.get('compressor', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Tipo rilevato: {meta.get('type', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Source rilevato: {meta.get('source', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Audio rilevato: {meta.get('audio', 'N/A')}\n")
@@ -296,8 +297,9 @@ class MKVRenameAssistant:
             self.info_text.insert(tk.END, f"Servizio: {meta.get('service', 'N/A')}\n")
             self.info_text.insert(tk.END, f"Release group: {meta.get('tag', 'N/A')}\n")
             
-            # Verifica REMUX
-            is_remux = self._is_remux()
+            # Verifica REMUX basata sui metadati corretti
+            tipo = meta.get('type', '').upper()
+            is_remux = tipo == 'REMUX'
             self.info_text.insert(tk.END, f"È REMUX?: {'Sì' if is_remux else 'No'}\n")
             
         except Exception as e:
@@ -346,15 +348,21 @@ class MKVRenameAssistant:
             else:
                 meta['resolution'] = f'{height}p'
         
-        # Codec video
+        # Formato e codec video
         if video_tracks and video_tracks[0].format:
             codec = video_tracks[0].format.upper()
             if 'HEVC' in codec or 'H.265' in codec:
+                meta['video_format'] = 'HEVC'
                 meta['video_codec'] = 'x265'
+                meta['compressor'] = 'x265'
             elif 'AVC' in codec or 'H.264' in codec:
+                meta['video_format'] = 'AVC'
                 meta['video_codec'] = 'x264'
+                meta['compressor'] = 'x264'
             else:
+                meta['video_format'] = codec
                 meta['video_codec'] = codec
+                meta['compressor'] = codec
         
         # Source - cerca di dedurre dalla risoluzione e altre info
         if 'resolution' in meta:
