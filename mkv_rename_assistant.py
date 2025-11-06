@@ -358,12 +358,20 @@ class MKVRenameAssistant:
         
         # Source - cerca di dedurre dalla risoluzione e altre info
         if 'resolution' in meta:
-            filename_upper = meta.get('basename', '').upper()
+            # Usa basename o current_file come fallback
+            basename = meta.get('basename', '')
+            if not basename:
+                basename = os.path.basename(self.current_file.get())
+            filename_upper = basename.upper()
             
-            # Controlla per WEB-DL/WEBRip
-            if any(keyword in filename_upper for keyword in ['WEB-DL', 'WEBDL', 'WEB.DL']):
+            # Controlla per WEB-DL/WEBRip e varianti italiane
+            if any(keyword in filename_upper for keyword in ['WEB-DL', 'WEBDL', 'WEB.DL', 'DLMUX', 'WEBMUX']):
                 meta['source'] = 'WEB'
-                meta['type'] = 'WEBDL'
+                # Se troviamo x264/x265 nella writing library, è un WEBRip
+                if self._has_encoded_writing_library():
+                    meta['type'] = 'WEBRIP'
+                else:
+                    meta['type'] = 'WEBDL'
             elif any(keyword in filename_upper for keyword in ['WEBRIP', 'WEB.RIP', 'WEB-RIP']):
                 meta['source'] = 'WEB' 
                 meta['type'] = 'WEBRIP'
@@ -486,6 +494,43 @@ class MKVRenameAssistant:
                 
         return False
     
+    def _has_encoded_writing_library(self):
+        """Controlla se la writing library indica che il file è stato encodato (x264/x265)"""
+        if not self.mediainfo_data:
+            return False
+            
+        video_tracks = [track for track in self.mediainfo_data.tracks 
+                       if track.track_type == 'Video']
+        
+        if video_tracks:
+            track = video_tracks[0]
+            
+            # Controlla Writing library per encoding indicators
+            writing_library = getattr(track, 'writing_library', '') or ''
+            writing_library = str(writing_library).lower()
+            
+            # Indicatori di encoding che suggeriscono WEBRip invece di WEB-DL
+            encoding_indicators = [
+                'x264', 'x265', 'handbrake', 'ffmpeg', 'mencoder', 
+                'staxrip', 'megui', 'xvid', 'divx', 'encoder'
+            ]
+            
+            for indicator in encoding_indicators:
+                if indicator in writing_library:
+                    return True  # È stato encodato - WEBRip
+                    
+            # Controlla anche Encoded_Library_Settings
+            encoded_settings = getattr(track, 'encoded_library_settings', '') or ''
+            encoded_settings = str(encoded_settings).lower()
+            
+            if encoded_settings:
+                encoding_settings_indicators = ['crf=', 'bitrate=', 'preset=', 'tune=']
+                for indicator in encoding_settings_indicators:
+                    if indicator in encoded_settings:
+                        return True  # È stato encodato - WEBRip
+                        
+        return False  # Non trova indicatori di encoding - WEB-DL
+    
     def _get_audio_format(self, audio_track):
         """Ottiene il formato audio dettagliato secondo gli esempi"""
         if not audio_track.format:
@@ -586,8 +631,18 @@ class MKVRenameAssistant:
         # Titolo e anno
         if title:
             components.append(title.replace(' ', '.'))
+            
+        # Controlla se è una serie TV (ha info episodio)
+        is_series = hasattr(self, '_temp_series')
+        
+        # Anno - solo se presente (non più anno di default)
         if year:
             components.append(year)
+            
+        # Aggiungi info serie se presente
+        if is_series:
+            components.append(self._temp_series)
+            delattr(self, '_temp_series')  # Pulisci dopo l'uso
         
         # Determina il tipo di release
         release_type = meta.get('type', 'ENCODE')
@@ -647,8 +702,14 @@ class MKVRenameAssistant:
             if hdr_info:
                 components.extend(hdr_info)
             
-            # Codec video (H.264/H.265 format)
-            video_codec = self._get_webdl_codec(meta)
+            # Codec video - formato diverso per WEB-DL vs WEBRip
+            if release_type == 'WEBDL':
+                # WEB-DL usa H.264/H.265
+                video_codec = self._get_webdl_codec(meta)
+            else:
+                # WEBRip usa x264/x265 
+                video_codec = self._get_encode_codec(meta)
+            
             if video_codec:
                 components.append(video_codec)
                 
@@ -824,8 +885,23 @@ class MKVRenameAssistant:
         return result
     
     def _extract_title_year(self, filename):
-        """Estrae titolo e anno dal nome del file"""
-        # Pattern comuni per estrarre titolo e anno
+        """Estrae titolo e anno dal nome del file, con supporto serie TV"""
+        # Pattern per serie TV con S01E01 - semplificato senza anno
+        series_pattern = r'^(.*?)\s+S(\d+)E(\d+)'  # Titolo S01E01
+        
+        # Controlla prima se è una serie TV
+        match = re.search(series_pattern, filename, re.IGNORECASE)
+        if match:
+            title = match.group(1).strip()
+            season = match.group(2).zfill(2)  # S01
+            episode = match.group(3).zfill(2)  # E01
+            
+            # Salva info serie (senza anno per ora)
+            self._temp_series = f"S{season}E{episode}"
+            
+            return title, None  # Nessun anno automatico per serie TV
+        
+        # Pattern comuni per film/contenuti normali
         patterns = [
             r'^(.*?)\.(\d{4})\..*',  # Titolo.Anno.resto
             r'^(.*?)[\.\s](\d{4})[\.\s].*',  # Titolo Anno resto
