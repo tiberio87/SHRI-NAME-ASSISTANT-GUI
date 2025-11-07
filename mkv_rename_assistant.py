@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from pymediainfo import MediaInfo
 import json
+import requests
 from config import RENAME_CONFIG, GUI_CONFIG, ERROR_MESSAGES, SUCCESS_MESSAGES
 
 
@@ -32,6 +33,9 @@ class MKVRenameAssistant:
         self.WHITESPACE_PATTERN = re.compile(r"\s{2,}")
         self.MARKER_PATTERN = re.compile(r"\b(" + "|".join(RENAME_CONFIG["remux_markers"]) + r")\b", re.IGNORECASE)
         self.CINEMA_NEWS_PATTERN = re.compile(r"\b(HDTS|TS|MD|LD|CAM|HDCAM|TC|HDTC)\b", re.IGNORECASE)
+        
+        # TMDb API configuration
+        self.TMDB_API_KEY = ""
         
         self.setup_ui()
         
@@ -69,13 +73,32 @@ class MKVRenameAssistant:
         ttk.Button(main_frame, text="Analizza File", 
                   command=self.analyze_file).grid(row=3, column=1, pady=10)
         
+        # Frame TMDb
+        tmdb_frame = ttk.LabelFrame(main_frame, text="Ricerca TMDb", padding="5")
+        tmdb_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=10)
+        tmdb_frame.columnconfigure(1, weight=1)
+        
+        ttk.Label(tmdb_frame, text="Tipo:").grid(row=0, column=0, sticky="w", padx=5)
+        self.content_type = tk.StringVar(value="movie")
+        ttk.Radiobutton(tmdb_frame, text="Film", variable=self.content_type, 
+                       value="movie").grid(row=0, column=1, sticky="w", padx=5)
+        ttk.Radiobutton(tmdb_frame, text="Serie TV", variable=self.content_type, 
+                       value="tv").grid(row=0, column=2, sticky="w", padx=5)
+        
+        ttk.Label(tmdb_frame, text="Titolo:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
+        self.search_title = tk.StringVar()
+        ttk.Entry(tmdb_frame, textvariable=self.search_title, width=50).grid(
+            row=1, column=1, sticky="ew", padx=5, pady=5)
+        ttk.Button(tmdb_frame, text="🔍 Cerca TMDb", 
+                  command=self.search_tmdb).grid(row=1, column=2, padx=5, pady=5)
+        
         # Separator
         ttk.Separator(main_frame, orient='horizontal').grid(
-            row=4, column=0, columnspan=3, sticky="ew", pady=10)
+            row=5, column=0, columnspan=3, sticky="ew", pady=10)
         
         # Informazioni file
         info_frame = ttk.LabelFrame(main_frame, text="Informazioni File", padding="10")
-        info_frame.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=5)
+        info_frame.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=5)
         info_frame.columnconfigure(1, weight=1)
         
         # Testo informazioni
@@ -90,16 +113,16 @@ class MKVRenameAssistant:
         
         # Separator
         ttk.Separator(main_frame, orient='horizontal').grid(
-            row=6, column=0, columnspan=3, sticky="ew", pady=10)
+            row=7, column=0, columnspan=3, sticky="ew", pady=10)
         
         # Nome nuovo
-        ttk.Label(main_frame, text="Nuovo nome:").grid(row=7, column=0, sticky="w", pady=5)
+        ttk.Label(main_frame, text="Nuovo nome:").grid(row=8, column=0, sticky="w", pady=5)
         ttk.Entry(main_frame, textvariable=self.new_name, width=60).grid(
-            row=7, column=1, columnspan=2, sticky="ew", pady=5, padx=(10, 0))
+            row=8, column=1, columnspan=2, sticky="ew", pady=5, padx=(10, 0))
         
         # Pulsanti azione
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=8, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=9, column=0, columnspan=3, pady=20)
         
         ttk.Button(button_frame, text="Genera Nome", 
                   command=self.generate_name).pack(side=tk.LEFT, padx=(0, 10))
@@ -108,7 +131,7 @@ class MKVRenameAssistant:
         ttk.Button(button_frame, text="Reset", 
                   command=self.reset_form).pack(side=tk.LEFT)
         
-        main_frame.rowconfigure(5, weight=1)
+        main_frame.rowconfigure(6, weight=1)
         
     def browse_file(self):
         """Apre dialog per selezionare file MKV"""
@@ -121,6 +144,119 @@ class MKVRenameAssistant:
             self.current_name.set(os.path.basename(filename))
             self.info_text.delete(1.0, tk.END)
             self.new_name.set("")
+            
+            # Auto-estrai titolo per ricerca TMDb
+            normalized_title = self._normalize_title_for_search(os.path.basename(filename))
+            self.search_title.set(normalized_title)
+            
+            # Avvia il processo automatico: Analisi → TMDb → Genera Nome
+            self.root.after(100, self.auto_process_file)
+    
+    def auto_process_file(self):
+        """Processo automatico: Analisi → TMDb → Selezione Manuale → Attesa Genera Nome"""
+        try:
+            # Step 1: Analisi MediaInfo
+            self.info_text.delete(1.0, tk.END)
+            self.info_text.insert(tk.END, "Analisi file in corso...\n")
+            self.root.update()
+            
+            if not self.current_file.get() or not os.path.exists(self.current_file.get()):
+                messagebox.showerror("Errore", "File non valido")
+                return
+            
+            # Analizza con MediaInfo
+            self.mediainfo_data = MediaInfo.parse(self.current_file.get())
+            self.info_text.insert(tk.END, "✅ Analisi MediaInfo completata\n")
+            self.root.update()
+            
+            # Step 2: Ricerca TMDb automatica
+            self.info_text.insert(tk.END, "Ricerca TMDb in corso...\n")
+            self.root.update()
+            
+            title = self.search_title.get().strip()
+            if title:
+                # Determina tipo automaticamente (serie TV o film)
+                if self._is_tv_series(os.path.basename(self.current_file.get())):
+                    self.content_type.set("tv")
+                else:
+                    self.content_type.set("movie")
+                
+                # Cerca su TMDb e mostra dialog selezione
+                self._search_and_select_tmdb(title)
+            else:
+                self.info_text.insert(tk.END, "⚠️ Nessun titolo da cercare\n")
+            
+            # Mostra informazioni complete del file
+            self.display_file_info()
+            
+        except Exception as e:
+            self.info_text.insert(tk.END, f"❌ Errore: {str(e)}\n")
+            messagebox.showerror("Errore", f"Errore durante il processo:\n{str(e)}")
+    
+    def _search_and_select_tmdb(self, title):
+        """Cerca su TMDb e permette selezione manuale del risultato corretto"""
+        try:
+            content_type = self.content_type.get()
+            endpoint = "movie" if content_type == "movie" else "tv"
+            
+            # Ricerca su TMDb
+            search_url = f"https://api.themoviedb.org/3/search/{endpoint}"
+            params = {
+                "api_key": self.TMDB_API_KEY,
+                "query": title,
+                "language": "it-IT"
+            }
+            
+            response = requests.get(search_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            results = response.json().get("results", [])
+            if not results:
+                self.info_text.insert(tk.END, "⚠️ Nessun risultato TMDb trovato\n")
+                messagebox.showinfo("TMDb", f"Nessun risultato trovato per '{title}'.\nPuoi comunque generare il nome con le informazioni attuali.")
+                return
+            
+            self.info_text.insert(tk.END, f"✅ Trovati {len(results)} risultati TMDb\n")
+            
+            # Mostra SEMPRE il dialog di selezione per permettere all'utente di scegliere
+            selected = self._show_tmdb_selection_dialog(results, endpoint)
+            if selected:
+                # Applica correzioni TMDb e avvia automaticamente il workflow
+                corrected_name = self._apply_tmdb_correction(selected)
+                self.info_text.insert(tk.END, f"✅ TMDb selezionato: {corrected_name}\n")
+                
+                # Avvia automaticamente la generazione del nome
+                self.info_text.insert(tk.END, "🎯 Generazione nome automatica...\n")
+                self.root.update()
+                
+                # Genera automaticamente il nome con i dati TMDb corretti
+                try:
+                    self.generate_name()
+                    self.info_text.insert(tk.END, "✅ Nome generato con successo!\n")
+                    
+                    # Mostra il risultato all'utente
+                    title_tmdb = selected.get("title") or selected.get("name", "")
+                    date = selected.get("release_date") or selected.get("first_air_date", "")
+                    year_tmdb = date.split("-")[0] if date else ""
+                    
+                    msg = f"✅ Processo completato!\n\n"
+                    msg += f"TMDb: {title_tmdb}"
+                    if year_tmdb:
+                        msg += f" ({year_tmdb})"
+                    msg += f"\n\nNuovo nome generato:\n{self.new_name.get()}"
+                    msg += "\n\nVuoi rinominare il file ora?"
+                    
+                    if messagebox.askyesno("TMDb e Nome Generati", msg):
+                        self.rename_file()
+                    
+                except Exception as e:
+                    self.info_text.insert(tk.END, f"❌ Errore generazione nome: {str(e)}\n")
+            else:
+                self.info_text.insert(tk.END, "⚠️ TMDb annullato - puoi comunque generare il nome manualmente\n")
+                
+        except Exception as e:
+            self.info_text.insert(tk.END, f"❌ Errore ricerca TMDb: {str(e)}\n")
+            messagebox.showerror("Errore TMDb", f"Errore durante la ricerca: {e}")
             
     def analyze_file(self):
         """Analizza il file MKV selezionato"""
@@ -140,6 +276,46 @@ class MKVRenameAssistant:
             
         except Exception as e:
             messagebox.showerror("Errore", f"{ERROR_MESSAGES['analysis_error']}\n{str(e)}")
+    
+
+    
+    def _apply_tmdb_correction(self, tmdb_result):
+        """Applica le correzioni TMDb al nome del file temporaneo"""
+        try:
+            # Ottieni informazioni corrette da TMDb
+            title = tmdb_result.get("title") or tmdb_result.get("name", "")
+            date = tmdb_result.get("release_date") or tmdb_result.get("first_air_date", "")
+            year = date.split("-")[0] if date else ""
+            
+            # Per serie TV, mantieni info episodio dal nome originale
+            original_filename = os.path.basename(self.current_file.get())
+            if self.content_type.get() == "tv":
+                episode_match = re.search(r'(?i)(S\d{1,2}E\d{1,2})', original_filename)
+                if episode_match:
+                    episode_info = episode_match.group(1).upper()
+                    corrected_name = f"{title} {episode_info}"
+                else:
+                    corrected_name = title
+            else:
+                corrected_name = title
+            
+            # Aggiungi anno se disponibile
+            if year:
+                if self.content_type.get() == "tv" and episode_match:
+                    # Per serie: Titolo Anno S01E01
+                    corrected_name = f"{title} {year} {episode_info}"
+                else:
+                    # Per film: Titolo Anno
+                    corrected_name = f"{title} {year}"
+            
+            # Aggiorna temporaneamente il nome corrente per la generazione
+            self._temp_corrected_name = corrected_name + ".mkv"
+            
+            return corrected_name
+            
+        except Exception as e:
+            print(f"Errore correzione TMDb: {e}")
+            return None
             
     def display_file_info(self):
         """Mostra le informazioni complete del file nella text area"""
@@ -920,7 +1096,46 @@ class MKVRenameAssistant:
         return result
     
     def _extract_title_year(self, filename):
-        """Estrae titolo e anno dal nome del file, con supporto serie TV"""
+        """Estrae titolo e anno dal nome del file, con supporto serie TV e correzione TMDb"""
+        # PRIORITÀ 1: Usa il nome corretto da TMDb se disponibile
+        if hasattr(self, '_temp_corrected_name'):
+            corrected_filename = self._temp_corrected_name
+            delattr(self, '_temp_corrected_name')  # Rimuovi dopo l'uso
+            
+            # Pattern per serie TV nel nome corretto TMDb
+            series_pattern = r'^(.*?)\s+(\d{4})\s+S(\d+)E(\d+)'  # Titolo Anno S01E01
+            match = re.search(series_pattern, corrected_filename, re.IGNORECASE)
+            if match:
+                title = match.group(1).strip()
+                year = match.group(2)
+                season = match.group(3).zfill(2)
+                episode = match.group(4).zfill(2)
+                self._temp_series = f"S{season}E{episode}"
+                return title, year
+            
+            # Pattern per serie senza anno: Titolo S01E01
+            series_pattern_no_year = r'^(.*?)\s+S(\d+)E(\d+)'
+            match = re.search(series_pattern_no_year, corrected_filename, re.IGNORECASE)
+            if match:
+                title = match.group(1).strip()
+                season = match.group(2).zfill(2)
+                episode = match.group(3).zfill(2)
+                self._temp_series = f"S{season}E{episode}"
+                return title, None
+            
+            # Pattern per film: Titolo Anno
+            film_pattern = r'^(.*?)\s+(\d{4})'
+            match = re.search(film_pattern, corrected_filename)
+            if match:
+                title = match.group(1).strip()
+                year = match.group(2)
+                return title, year
+            
+            # Solo titolo (rimuovi .mkv se presente)
+            clean_title = corrected_filename.replace('.mkv', '').strip()
+            return clean_title, None
+        
+        # PRIORITÀ 2: Analisi del nome file originale (fallback)
         # Pattern per serie TV con S01E01 - semplificato senza anno
         series_pattern = r'^(.*?)\s+S(\d+)E(\d+)'  # Titolo S01E01
         
@@ -993,6 +1208,310 @@ class MKVRenameAssistant:
         self.new_name.set("")
         self.info_text.delete(1.0, tk.END)
         self.mediainfo_data = None
+
+    def _normalize_title_for_search(self, filename):
+        """Normalizza il nome del file per la ricerca TMDb con pulizia più aggressiva"""
+        # Rimuovi estensione
+        name = os.path.splitext(filename)[0]
+        
+        # Rimuovi pattern comuni per serie TV (mantieni solo titolo)
+        if self._is_tv_series(name):
+            # Tronca tutto a partire dal primo marker stagione/episodio
+            episode_match = re.search(r'(?i)\b(?:S\d{1,2}E\d{1,2}|\d{1,2}x\d{2}|Season\s?\d+|\bS\d{1,2}\b|\bEp?\d{1,3}\b)', name)
+            if episode_match:
+                name = name[:episode_match.start()].strip()
+        
+        # Prima rimuovi l'anno se presente per evitare interferenze
+        year_match = re.search(r'\b(19|20)\d{2}\b', name)
+        found_year = year_match.group() if year_match else None
+        
+        # Rimuovi pattern comuni - ordine specifico per evitare frammenti
+        tag_patterns = [
+            # Audio codec prima (per evitare E-AC-3 -> E AC)
+            r'\bE-AC-3\b',
+            r'\bAC-3\b',
+            r'\bDTS-HD\.MA\b',
+            r'\bDTS-HD\b',
+            r'\bTrueHD\b',
+            r'\bDD[\+P]?[0-9\.]*\b',
+            r'\bDDP[0-9\.]*\b',
+            r'\bAAC[0-9\.]*\b',
+            r'\bATMOS\b',
+            
+            # Formati video e risoluzioni
+            r'\b(?:1080p|720p|2160p|4k|uhd|480p|540p|8k)\b',
+            r'\b(?:h\.?264|h264|x\.?264|x264|h\.?265|h265|x\.?265|x265|avc|hevc|av1|hvec)\b',
+            
+            # Tipi di release
+            r'\b(?:bdrip|brrip|bluray|bd|bdremux|hdrip|dvdrip|webrip|web[-_.]?dl|webdl|web)\b',
+            r'\b(?:dlmux|webmux|remux|proper|repack|readnfo|internal|limited|unrated)\b',
+            
+            # HDR e video tech
+            r'\b(?:hdr|hdr10|dv|dolby[-_.]?vision)\b',
+            r'\b(?:sdr|rec\.?709|rec\.?2020|bt\.?709|bt\.?2020)\b',
+            
+            # Lingue
+            r'\b(?:ita|eng|italian|english|multi|sub|subs|dubbed|dub)\b',
+            
+            # Servizi streaming
+            r'\b(?:amzn|amazon|netflix|nf|dsnp|disney|hulu|atvp|apple|max|hbo|paramount|peacock|crunchyroll|funimation)\b',
+            
+            # Altri tag
+            r'\b(?:director\'?s?\.?cut|extended|theatrical|uncut|unrated|remastered|criterion)\b',
+            
+            # Anno (dopo aver salvato quello trovato)
+            r'\b(19|20)\d{2}\b',
+            
+            # Release group (alla fine)
+            r'-[^-\s]*$',
+            r'\[[^\]]*\]$',
+        ]
+        
+        for pattern in tag_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE)
+        
+        # Pulisci separatori e caratteri speciali
+        name = re.sub(r'[._\-\(\)\[\]]+', ' ', name)
+        
+        # Rimuovi parole singole rimaste (es: "E", "AC", "3")
+        words = name.split()
+        cleaned_words = []
+        for word in words:
+            # Mantieni solo parole significative (più di 1 carattere o parole comuni)
+            if (len(word) > 1 or word.lower() in ['a', 'i', 'o', 'e', 'u', 'la', 'il', 'lo', 'le', 'gli', 'un', 'una', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra']):
+                # Ma escludi numeri singoli e frammenti comuni
+                if not (word.isdigit() or word.upper() in ['AC', 'E', 'DL', 'WEB', 'HD', 'BD', 'DVD']):
+                    cleaned_words.append(word)
+        
+        # Ricostruisci il titolo
+        name = ' '.join(cleaned_words)
+        
+        # Pulisci spazi multipli e trim
+        name = re.sub(r'\s+', ' ', name).strip()
+        
+        # Se il risultato è vuoto o troppo corto, usa il nome originale
+        if not name or len(name) < 3:
+            name = os.path.splitext(filename)[0]
+            name = re.sub(r'[._-]', ' ', name)
+            name = re.sub(r'\s+', ' ', name).strip()
+        
+        return name
+
+    def search_tmdb(self):
+        """Cerca su TMDb il titolo specificato"""
+        title = self.search_title.get().strip()
+        if not title:
+            messagebox.showerror("Errore", "Inserisci un titolo da cercare")
+            return
+            
+        try:
+            content_type = self.content_type.get()
+            endpoint = "movie" if content_type == "movie" else "tv"
+            
+            # Ricerca su TMDb
+            search_url = f"https://api.themoviedb.org/3/search/{endpoint}"
+            params = {
+                "api_key": self.TMDB_API_KEY,
+                "query": title,
+                "language": "it-IT"
+            }
+            
+            response = requests.get(search_url, params=params, timeout=10)
+            response.raise_for_status()
+            
+            results = response.json().get("results", [])
+            if not results:
+                messagebox.showinfo("TMDb", f"Nessun risultato trovato per '{title}'")
+                return
+            
+            # Se ci sono più risultati, chiedi all'utente di scegliere
+            if len(results) > 1:
+                selected = self._show_tmdb_selection_dialog(results, endpoint)
+                if not selected:
+                    return
+            else:
+                selected = results[0]
+            
+            # Aggiorna il nome del file con le informazioni TMDb
+            self._update_name_with_tmdb_info(selected, endpoint)
+            
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Errore TMDb", f"Errore di connessione: {e}")
+        except Exception as e:
+            messagebox.showerror("Errore", f"Errore durante la ricerca TMDb: {e}")
+    
+    def _show_tmdb_selection_dialog(self, results, endpoint):
+        """Mostra dialog per selezione da risultati TMDb con preview"""
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Seleziona il Film/Serie TV Corretto - TMDb")
+        dialog.geometry("700x500")
+        dialog.resizable(True, True)
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        selected_result = None
+        
+        # Frame principale
+        main_frame = ttk.Frame(dialog, padding="15")
+        main_frame.pack(fill="both", expand=True)
+        
+        # Titolo del dialog
+        title_label = ttk.Label(main_frame, 
+                               text=f"Trovati {len(results)} risultati per il {'film' if endpoint == 'movie' else 'serie TV'}:", 
+                               font=("Arial", 12, "bold"))
+        title_label.pack(anchor="w", pady=(0, 15))
+        
+        instruction_label = ttk.Label(main_frame, 
+                                    text="Seleziona il risultato corretto per applicare titolo e anno giusti:",
+                                    font=("Arial", 10))
+        instruction_label.pack(anchor="w", pady=(0, 10))
+        
+        # Lista con scrollbar
+        list_frame = ttk.Frame(main_frame)
+        list_frame.pack(fill="both", expand=True)
+        
+        listbox = tk.Listbox(list_frame, font=("Arial", 10), height=12)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=listbox.yview)
+        listbox.configure(yscrollcommand=scrollbar.set)
+        
+        # Popola lista con informazioni dettagliate
+        for i, result in enumerate(results):
+            title = result.get("title") or result.get("name", "")
+            date = result.get("release_date") or result.get("first_air_date", "")
+            year = date.split("-")[0] if date else "Anno sconosciuto"
+            overview = result.get("overview", "Nessuna descrizione disponibile")
+            
+            # Tronca overview se troppo lungo
+            if len(overview) > 80:
+                overview = overview[:80] + "..."
+            
+            display_text = f"{i+1}. {title} ({year})\n   {overview}"
+            listbox.insert(tk.END, display_text)
+        
+        listbox.pack(side="left", fill="both", expand=True, padx=(0, 5))
+        scrollbar.pack(side="right", fill="y")
+        
+        # Seleziona automaticamente il primo risultato
+        listbox.selection_set(0)
+        listbox.activate(0)
+        
+        # Frame info selezione
+        info_frame = ttk.LabelFrame(main_frame, text="Anteprima Selezione", padding="10")
+        info_frame.pack(fill="x", pady=(10, 0))
+        
+        info_label = ttk.Label(info_frame, text="", font=("Arial", 9), wraplength=600)
+        info_label.pack(anchor="w")
+        
+        def update_preview(event=None):
+            selection = listbox.curselection()
+            if selection:
+                result = results[selection[0]]
+                title = result.get("title") or result.get("name", "")
+                date = result.get("release_date") or result.get("first_air_date", "")
+                year = date.split("-")[0] if date else ""
+                
+                preview_text = f"Titolo: {title}\nAnno: {year if year else 'Non specificato'}"
+                if date:
+                    preview_text += f"\nData completa: {date}"
+                
+                info_label.config(text=preview_text)
+        
+        # Aggiorna preview quando cambia selezione
+        listbox.bind("<<ListboxSelect>>", update_preview)
+        update_preview()  # Mostra preview iniziale
+        
+        # Pulsanti
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill="x", pady=(15, 0))
+        
+        def on_select():
+            nonlocal selected_result
+            selection = listbox.curselection()
+            if selection:
+                selected_result = results[selection[0]]
+                dialog.destroy()
+            else:
+                messagebox.showwarning("Attenzione", "Seleziona un risultato dalla lista")
+        
+        def on_cancel():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="✅ Usa Questo Risultato", 
+                  command=on_select).pack(side="right", padx=(5, 0))
+        ttk.Button(button_frame, text="❌ Annulla", 
+                  command=on_cancel).pack(side="right")
+        
+        # Info aggiuntiva
+        help_label = ttk.Label(main_frame, 
+                              text="💡 Suggerimento: Doppio clic per selezione rapida",
+                              font=("Arial", 8), foreground="gray")
+        help_label.pack(anchor="w", pady=(5, 0))
+        
+        # Gestione doppio click
+        listbox.bind("<Double-1>", lambda e: on_select())
+        
+        # Focus sulla lista
+        listbox.focus_set()
+        
+        dialog.wait_window()
+        return selected_result
+    
+    def _update_name_with_tmdb_info(self, tmdb_result, endpoint):
+        """Aggiorna il nome del file con le informazioni TMDb"""
+        try:
+            # Ottieni informazioni base
+            title = tmdb_result.get("title") or tmdb_result.get("name", "")
+            date = tmdb_result.get("release_date") or tmdb_result.get("first_air_date", "")
+            year = date.split("-")[0] if date else ""
+            
+            # Per serie TV, cerca pattern episodio nel nome originale
+            original_filename = os.path.basename(self.current_file.get())
+            if endpoint == "tv":
+                episode_match = re.search(r'(?i)(S\d{1,2}E\d{1,2})', original_filename)
+                if episode_match:
+                    episode_info = episode_match.group(1).upper()
+                    new_title = f"{title} {episode_info}"
+                else:
+                    new_title = title
+            else:
+                new_title = title
+            
+            # Aggiorna il titolo per la ricerca (mostra all'utente cosa è stato trovato)
+            if year:
+                display_title = f"{title} ({year})"
+            else:
+                display_title = title
+                
+            # Mostra messaggio di successo
+            msg = f"Trovato su TMDb:\n{display_title}"
+            if endpoint == "tv" and episode_match:
+                msg += f"\nEpisodio: {episode_info}"
+            
+            messagebox.showinfo("TMDb", msg)
+            
+            # Suggerisci di rigenerare il nome
+            if messagebox.askyesno("TMDb", "Vuoi rigenerare automaticamente il nome del file?"):
+                # Aggiorna temporaneamente il nome base per la generazione
+                original_current = self.current_name.get()
+                
+                # Crea un nome temporaneo con le info TMDb
+                temp_name = f"{title}"
+                if year:
+                    temp_name += f" {year}"
+                if endpoint == "tv" and episode_match:
+                    temp_name += f" {episode_info}"
+                temp_name += ".mkv"
+                
+                self.current_name.set(temp_name)
+                
+                # Genera il nuovo nome
+                self.generate_name()
+                
+                # Ripristina il nome originale
+                self.current_name.set(original_current)
+            
+        except Exception as e:
+            messagebox.showerror("Errore", f"Errore durante l'aggiornamento: {e}")
 
 
 def main():
