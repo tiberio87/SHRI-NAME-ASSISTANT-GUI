@@ -1,0 +1,19 @@
+# Dipendenze per ambiente di sviluppo
+# Installa con: pip install -r requirements-dev.txt
+
+# Core dependencies (produzione)
+pymediainfo>=6.0.0
+
+# Development dependencies
+pytest>=7.0.0
+pytest-cov>=4.0.0
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.0.0
+
+# GUI testing (opzionale)
+pytest-qt>=4.0.0
+
+# Documentation
+sphinx>=6.0.0
+sphinx-rtd-theme>=1.0.0
