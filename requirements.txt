@@ -1,3 +1,4 @@
 # Core dependencies per produzione
 pymediainfo>=6.0.0
 requests>=2.25.0
+pyinstaller
