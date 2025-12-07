@@ -1,9 +1,77 @@
-.venv
+# Byte-compiled / optimized / DLL files
 __pycache__/
-*.pyc
-.tmdb_config
+*.py[cod]
+*$py.class
+
+# Virtual environments
 .env
 .env.local
-*.egg-info/
-dist/
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Development and test files (keep in dev branch only)
+test_*.py
+*_test.py
+tests/
+ESEMPI_TEST.md
+start_*.bat
+*.bat
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# Distribution / packaging
 build/
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Coverage reports
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.pytest_cache/
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+
+# Documentation build
+docs/_build/
+
+# Cache files
+.cache/
+*.cache
+
+# Profile files
+*.prof
+profile.stats
+
+# TMDb Configuration (sensitive - never commit)
+.tmdb_config
