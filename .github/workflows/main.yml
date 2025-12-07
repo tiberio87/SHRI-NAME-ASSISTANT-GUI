@@ -1,0 +1,84 @@
+name: Build and Release Executables
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Enter the version (e.g., v1.0.0)"
+        required: true
+
+env:
+  COMPILE_PY: "mkv_rename_assistant"
+  APP_BASE_NAME: "mkv-rename-assistant-${{ github.event.inputs.version }}"
+  
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.x"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Build executable
+        run: pyinstaller --onefile -w ${{ env.COMPILE_PY }}.py
+
+      - name: Rename executable
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            mv dist/${{ env.COMPILE_PY }}.exe dist/${{ env.APP_BASE_NAME }}-windows.exe
+          elif [[ "$RUNNER_OS" == "Linux" ]]; then
+            mv dist/${{ env.COMPILE_PY }} dist/${{ env.APP_BASE_NAME }}-linux
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            mv dist/${{ env.COMPILE_PY }} dist/${{ env.APP_BASE_NAME }}-macos
+          fi
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.APP_BASE_NAME }}-${{ matrix.os }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: List downloaded files (Debugging)
+        run: ls -R
+
+      - name: Make files executable (Linux/Mac)
+        run: chmod +x ${{ env.APP_BASE_NAME }}-* || true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            ${{ env.APP_BASE_NAME }}-linux
+            ${{ env.APP_BASE_NAME }}-windows.exe
+            ${{ env.APP_BASE_NAME }}-macos
