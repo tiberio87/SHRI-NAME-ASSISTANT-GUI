@@ -1404,7 +1404,7 @@ class MKVRenameAssistant:
         elif release_type == 'WEBDL':
             source_parts.append('WEB-DL')
         elif release_type == 'WEBRIP':
-            source_parts.append('WEB-RIP')
+            source_parts.append('WEBRip')
         elif release_type == 'ENCODE':
             source_parts.append('BluRay')
         elif release_type == 'DVDRIP':
