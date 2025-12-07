@@ -48,6 +48,7 @@ class MKVRenameAssistant:
         self.current_file = tk.StringVar()
         self.current_name = tk.StringVar()
         self.new_name = tk.StringVar()
+        self.scene_title = tk.StringVar()
         self.mediainfo_data = None
         
         # Pattern regex dal codice SHRI
@@ -165,7 +166,7 @@ class MKVRenameAssistant:
         
         info_frame.rowconfigure(0, weight=1)
         
-        # Separator
+        # Separatore
         ttk.Separator(main_frame, orient='horizontal').grid(
             row=7, column=0, columnspan=3, sticky="ew", pady=10)
         
@@ -174,9 +175,17 @@ class MKVRenameAssistant:
         ttk.Entry(main_frame, textvariable=self.new_name, width=60).grid(
             row=8, column=1, columnspan=2, sticky="ew", pady=5, padx=(10, 0))
         
+        # Titolo Scene-Compliant (per tracker)
+        ttk.Label(main_frame, text="Titolo Tracker:").grid(row=9, column=0, sticky="w", pady=5)
+        self.scene_title = tk.StringVar()
+        scene_entry = ttk.Entry(main_frame, textvariable=self.scene_title, width=60, state="readonly")
+        scene_entry.grid(row=9, column=1, sticky="ew", pady=5, padx=(10, 5))
+        ttk.Button(main_frame, text="📋", width=3,
+                  command=self.copy_scene_title).grid(row=9, column=2, pady=5, padx=0)
+        
         # Pulsanti azione
         button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=9, column=0, columnspan=3, pady=20)
+        button_frame.grid(row=10, column=0, columnspan=3, pady=20)
         
         ttk.Button(button_frame, text="Genera Nome", 
                   command=self.generate_name).pack(side=tk.LEFT, padx=(0, 10))
@@ -829,21 +838,21 @@ class MKVRenameAssistant:
             features = str(audio_track.format_additionalfeatures).upper()
             has_atmos = 'ATMOS' in features or 'JOC' in features
         
-        # Mappa secondo gli esempi
+        # Mappa secondo gli esempi (con spazi corretti)
         if fmt == 'AC-3':
-            return f'DD{channel_suffix}'
+            return f'DD {channel_suffix}'
         elif fmt == 'E-AC-3':
             if has_atmos:
-                return f'DDP{channel_suffix}.Atmos'
-            return f'DDP{channel_suffix}'
+                return f'DD+ {channel_suffix} Atmos'
+            return f'DD+ {channel_suffix}'
         elif fmt == 'TRUEHD' or fmt == 'MLP FBA':
             if has_atmos:
-                return f'TrueHD.Atmos.{channel_suffix}'
-            return f'TrueHD.{channel_suffix}'
+                return f'TrueHD {channel_suffix} Atmos'
+            return f'TrueHD {channel_suffix}'
         elif fmt == 'DTS-HD MA':
-            return f'DTS-HD.MA.{channel_suffix}'
+            return f'DTS-HD MA {channel_suffix}'
         elif fmt == 'DTS':
-            return f'DTS.{channel_suffix}'
+            return f'DTS {channel_suffix}'
         else:
             return RENAME_CONFIG["audio_format_mapping"].get(fmt, fmt)
     
@@ -886,6 +895,18 @@ class MKVRenameAssistant:
             meta = self.extract_metadata()
             new_name = self._build_scene_name(meta)
             self.new_name.set(new_name)
+            
+            # Genera anche il titolo scene-compliant per il tracker
+            # Se disponibile, usa i dati corretti da TMDb
+            tmdb_title = getattr(self, '_temp_tmdb_title', None)
+            tmdb_year = getattr(self, '_temp_tmdb_year', None)
+            
+            # Altrimenti estrai da nome originale
+            if not tmdb_title:
+                tmdb_title, tmdb_year = self._extract_title_year(meta.get('basename', ''))
+            
+            scene_title = self._generate_scene_compliant_title(tmdb_title=tmdb_title, tmdb_year=tmdb_year)
+            self.scene_title.set(scene_title)
             
         except Exception as e:
             messagebox.showerror("Errore", f"Errore durante la generazione del nome:\n{str(e)}")
@@ -1097,6 +1118,12 @@ class MKVRenameAssistant:
                 if 'dolby vision' in hdr_format or 'dv' in hdr_format:
                     hdr_components.append('DV')
                 
+                # Controlla se HDR10 è nel hdr_format
+                if 'hdr10' in hdr_format and 'HDR10' not in hdr_components:
+                    hdr_components.append('HDR10')
+                elif 'hdr' in hdr_format and 'hdr10' not in hdr_format and 'HDR' not in hdr_components and 'HDR10' not in hdr_components:
+                    hdr_components.append('HDR')
+                
                 # Controlla HDR Format Profile per dettagli aggiuntivi
                 hdr_format_profile = getattr(track, 'hdr_format_profile', '') or ''
                 hdr_format_profile = str(hdr_format_profile).lower()
@@ -1268,8 +1295,170 @@ class MKVRenameAssistant:
         self.current_file.set("")
         self.current_name.set("")
         self.new_name.set("")
+        self.scene_title.set("")
         self.info_text.delete(1.0, tk.END)
         self.mediainfo_data = None
+    
+    def copy_scene_title(self):
+        """Copia il titolo scene-compliant negli appunti"""
+        scene_title = self.scene_title.get()
+        if not scene_title:
+            messagebox.showwarning("Avviso", "Nessun titolo tracker disponibile.\nGenera prima il nome.")
+            return
+        
+        try:
+            # Copia negli appunti
+            self.root.clipboard_clear()
+            self.root.clipboard_append(scene_title)
+            self.root.update()
+            messagebox.showinfo("Successo", f"Titolo copiato negli appunti!\n\n{scene_title}")
+        except Exception as e:
+            messagebox.showerror("Errore", f"Impossibile copiare negli appunti:\n{str(e)}")
+    
+    def _generate_scene_compliant_title(self, tmdb_title=None, tmdb_year=None):
+        """
+        Genera il titolo scene-compliant per il tracker nel formato:
+        Titolo Anno LINGUE RISOLUZIONE FONTE AUDIO_CODEC CANALI HDR_INFO CODEC_VIDEO-RELEASE_GROUP
+        
+        Esempi:
+        - Warfare - Tempo di guerra 2025 ENGLISH - ITALIAN 1080p BluRay DD+ 5.1 x264-iSlaNd
+        - The Abandons 2025 S01 ENGLISH - ITALIAN 2160p NF WEB-DL DD+ 5.1 DV HDR H.265-G66
+        """
+        if not self.mediainfo_data:
+            return ""
+        
+        # Estrai metadati dal file
+        meta = self.extract_metadata()
+        
+        # 1. TITOLO (da TMDb se disponibile, altrimenti dal file)
+        if tmdb_title:
+            title = tmdb_title
+        else:
+            title, _ = self._extract_title_year(meta.get('basename', ''))
+            title = title or "Unknown"
+        
+        # 2. ANNO (da TMDb se disponibile, altrimenti dal file)
+        year = tmdb_year or ""
+        
+        # 3. SERIE TV - aggiunge S01 invece di anno
+        # Estrai stagione dal basename
+        season_match = re.search(r'S(\d+)', meta.get('basename', ''), re.IGNORECASE)
+        if season_match or self._is_tv_series(meta.get('basename', '')):
+            # È una serie TV
+            if season_match:
+                season_num = season_match.group(1).zfill(2)
+                # Per serie TV, se abbiamo l'anno da TMDb, lo includiamo prima della stagione
+                if year:
+                    scene_title = f"{title} {year} S{season_num}"
+                else:
+                    scene_title = f"{title} S{season_num}"
+            else:
+                scene_title = title
+        else:
+            # Film - aggiungi anno
+            scene_title = f"{title} {year}" if year else title
+        
+        # 4. LINGUE (ordine alfabetico da tracce audio)
+        languages = meta.get('audio_languages', [])
+        if languages:
+            # Mappa codice lingua a nome completo
+            lang_mapping = {
+                'en': 'ENGLISH',
+                'it': 'ITALIAN',
+                'fr': 'FRENCH',
+                'de': 'GERMAN',
+                'es': 'SPANISH',
+                'pt': 'PORTUGUESE',
+                'ja': 'JAPANESE',
+                'zh': 'CHINESE',
+                'ko': 'KOREAN',
+                'ru': 'RUSSIAN',
+            }
+            
+            lang_names = []
+            for lang_code in sorted(languages):  # Ordine alfabetico
+                lang_name = lang_mapping.get(lang_code.lower(), lang_code.upper())
+                if lang_name not in lang_names:
+                    lang_names.append(lang_name)
+            
+            languages_str = " - ".join(lang_names) if lang_names else ""
+        else:
+            languages_str = ""
+        
+        # 5. RISOLUZIONE
+        resolution = meta.get('resolution', '1080p')
+        
+        # 6. FONTE (BluRay, WEB-DL, NF, etc.)
+        source_parts = []
+        
+        # Servizio streaming (NF, AMZN, DSNP, etc.)
+        service = meta.get('service', '')
+        if service:
+            service_name = RENAME_CONFIG["service_mapping"].get(service, service)
+            source_parts.append(service_name)
+        
+        # Tipo di release (BluRay, WEB-DL, REMUX, etc.)
+        release_type = meta.get('type', 'UNKNOWN')
+        if release_type == 'REMUX':
+            source_parts.append('BluRay')  # REMUX è una variante di BluRay nel formato scene
+        elif release_type == 'WEBDL':
+            source_parts.append('WEB-DL')
+        elif release_type == 'WEBRIP':
+            source_parts.append('WEB-RIP')
+        elif release_type == 'ENCODE':
+            source_parts.append('BluRay')
+        elif release_type == 'DVDRIP':
+            source_parts.append('DVDRip')
+        else:
+            source_parts.append('BluRay')  # Default
+        
+        source_str = " ".join(source_parts) if source_parts else "Unknown"
+        
+        # 7. AUDIO CODEC + CANALI
+        audio_info = meta.get('audio', '')
+        
+        # 8. HDR INFO (solo se presente)
+        hdr_info = meta.get('hdr_info', [])
+        hdr_str = " ".join(hdr_info) if hdr_info else ""
+        
+        # 9. CODEC VIDEO
+        if meta.get('type') == 'WEBDL':
+            # Per WEB-DL usa il codec H.264/H.265
+            video_codec = self._get_webdl_codec(meta)
+        elif meta.get('type') == 'REMUX':
+            # Per REMUX usa x265/x264 nel formato scene
+            codec = meta.get('video_codec', '')
+            if 'HEVC' in codec or 'H.265' in codec or 'x265' in codec:
+                video_codec = 'x265'
+            else:
+                video_codec = 'x264'
+        else:
+            # Per ENCODE usa x264/x265
+            video_codec = self._get_encode_codec(meta)
+        
+        # 10. RELEASE GROUP
+        release_group = meta.get('tag', '')
+        if not release_group:
+            release_group = 'NoGroup'
+        
+        # ASSEMBLA IL TITOLO FINALE
+        scene_parts = [scene_title]
+        
+        if languages_str:
+            scene_parts.append(languages_str)
+        
+        scene_parts.append(resolution)
+        scene_parts.append(source_str)
+        
+        if audio_info:
+            scene_parts.append(audio_info)
+        
+        if hdr_str:
+            scene_parts.append(hdr_str)
+        
+        scene_parts.append(f"{video_codec}-{release_group}")
+        
+        return " ".join(scene_parts)
 
     def _normalize_title_for_search(self, filename):
         """Normalizza il nome del file per la ricerca TMDb con pulizia più aggressiva"""
@@ -1289,9 +1478,9 @@ class MKVRenameAssistant:
         
         # Rimuovi pattern comuni - ordine specifico per evitare frammenti
         tag_patterns = [
-            # Audio codec prima (per evitare E-AC-3 -> E AC)
-            r'\bE-AC-3\b',
-            r'\bAC-3\b',
+            # Audio codec prima (per evitare E-AC-3 -> E AC) - ORDINE IMPORTANTE!
+            r'\bE-?AC-?3\b',    # Cattura E-AC-3, E-AC3, EAC-3, EAC3
+            r'\bAC-?3\b',       # Cattura AC-3, AC3
             r'\bDTS-HD\.MA\b',
             r'\bDTS-HD\b',
             r'\bTrueHD\b',
@@ -1300,50 +1489,91 @@ class MKVRenameAssistant:
             r'\bAAC[0-9\.]*\b',
             r'\bATMOS\b',
             
-            # Formati video e risoluzioni
-            r'\b(?:1080p|720p|2160p|4k|uhd|480p|540p|8k)\b',
+            # Marker REMUX e non-compresso
+            r'\b(?:UNTOUCHED|VU|DOWNCONVERT)\b',
+            
+            # Formati video e risoluzioni (PRIMA di HDR/UHD perché sono più specifici)
+            r'\b(?:1080p|720p|2160p|480p|540p|8k)\b',
             r'\b(?:h\.?264|h264|x\.?264|x264|h\.?265|h265|x\.?265|x265|avc|hevc|av1|hvec)\b',
             
-            # Tipi di release
-            r'\b(?:bdrip|brrip|bluray|bd|bdremux|hdrip|dvdrip|webrip|web[-_.]?dl|webdl|web)\b',
-            r'\b(?:dlmux|webmux|remux|proper|repack|readnfo|internal|limited|unrated)\b',
+            # HDR e video tech - SEPARATE da risoluzioni per evitare conflitti
+            r'\b(?:HDR|HDR10|HLG|DV|DOLBY[-_.]?VISION)\b',  # HDR specifici
+            r'\b(?:UHD|4K)\b',  # Format specifici
             
-            # HDR e video tech
-            r'\b(?:hdr|hdr10|dv|dolby[-_.]?vision)\b',
-            r'\b(?:sdr|rec\.?709|rec\.?2020|bt\.?709|bt\.?2020)\b',
+            # Tipi di release
+            r'\b(?:BDRIP|BRRIP|BLURAY|BD|BDREMUX|HDRIP|DVDRIP|WEBRIP|WEB[-_.]?DL|WEBDL|WEB)\b',
+            r'\b(?:DLMUX|WEBMUX|REMUX|PROPER|REPACK|READNFO|INTERNAL|LIMITED|UNRATED)\b',
+            
+            # Color space (dopo HDR specifici per evitare conflitti)
+            r'\b(?:SDR|REC\.?709|REC\.?2020|BT\.?709|BT\.?2020)\b',
             
             # Lingue
-            r'\b(?:ita|eng|italian|english|multi|sub|subs|dubbed|dub)\b',
+            r'\b(?:ITA|ENG|ITALIAN|ENGLISH|MULTI|SUB|SUBS|DUBBED|DUB)\b',
             
             # Servizi streaming
-            r'\b(?:amzn|amazon|netflix|nf|dsnp|disney|hulu|atvp|apple|max|hbo|paramount|peacock|crunchyroll|funimation)\b',
+            r'\b(?:AMZN|AMAZON|NETFLIX|NF|DSNP|DISNEY|HULU|ATVP|APPLE|MAX|HBO|PARAMOUNT|PEACOCK|CRUNCHYROLL|FUNIMATION)\b',
             
             # Altri tag
-            r'\b(?:director\'?s?\.?cut|extended|theatrical|uncut|unrated|remastered|criterion)\b',
+            r'\b(?:DIRECTOR\'?S?\.?CUT|EXTENDED|THEATRICAL|UNCUT|REMASTERED|CRITERION)\b',
             
             # Anno (dopo aver salvato quello trovato)
             r'\b(19|20)\d{2}\b',
             
-            # Release group (alla fine)
-            r'-[^-\s]*$',
+            # Release group (alla fine) - Pattern più specifico
+            r'[-_](?:[A-Za-z0-9]+)$',
             r'\[[^\]]*\]$',
         ]
-        
-        for pattern in tag_patterns:
-            name = re.sub(pattern, '', name, flags=re.IGNORECASE)
         
         # Pulisci separatori e caratteri speciali
         name = re.sub(r'[._\-\(\)\[\]]+', ' ', name)
         
+        # Adesso applica i pattern regex (dopo aver convertito separatori in spazi)
+        for pattern in tag_patterns:
+            name = re.sub(pattern, '', name, flags=re.IGNORECASE)
+        
         # Rimuovi parole singole rimaste (es: "E", "AC", "3")
+        # LISTA ESTESA di frammenti comuni da rimuovere
+        fragments_to_remove = {
+            'AC', 'E', 'DL', 'WEB', 'HD', 'BD', 'DVD',
+            'P', 'I', 'DDP', 'DD',  # Frammenti audio
+            'H', 'X',  # Frammenti codec
+            'MA', 'S', 'RM', 'RIP',  # Altri frammenti
+            '3', '5', '7',  # Numeri singoli comuni
+            'AVC', 'HEVC', 'H264', 'H265',  # Codec rimasti
+        }
+        
+        # Release groups comuni (parole che spesso rimangono ma non fanno parte del titolo)
+        release_groups_common = {
+            'FHC', 'ABC', 'TASKO', 'XYZ', 'TEAM', 'CREW', 'GROUP',
+            'PROPER', 'REPACK', 'REMUX', 'SCENE',
+            'INTERNAL', 'LIMITED',
+        }
+        
+        # Rilevi pattern release group (token finale tipicamente 3-4 caratteri maiuscoli)
+        # Es: "Title Something FHC" -> FHC è release group
         words = name.split()
+        
+        # Se l'ultima parola è tutta maiuscola e 2-4 caratteri, è probabilmente release group
+        if words and len(words[-1]) <= 4 and words[-1].isupper() and not words[-1].isdigit():
+            # Verifica che non sia un titolo noto breve (es: "SOS")
+            last_word_abbrev = ['FBI', 'CIA', 'NSA', 'USA', 'UK', 'LA', 'NYC', 'DVD', 'DTV', 'OVA']
+            if words[-1] not in last_word_abbrev:
+                words.pop()
+        
+        # Rimuovi release groups noti dalla fine
+        while words and words[-1].upper() in release_groups_common:
+            words.pop()
+        
         cleaned_words = []
         for word in words:
-            # Mantieni solo parole significative (più di 1 carattere o parole comuni)
-            if (len(word) > 1 or word.lower() in ['a', 'i', 'o', 'e', 'u', 'la', 'il', 'lo', 'le', 'gli', 'un', 'una', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra']):
-                # Ma escludi numeri singoli e frammenti comuni
-                if not (word.isdigit() or word.upper() in ['AC', 'E', 'DL', 'WEB', 'HD', 'BD', 'DVD']):
-                    cleaned_words.append(word)
+            # Mantieni solo parole significative
+            # Almeno 2 caratteri OPPURE parole comuni italiane monosillabiche
+            word_lower = word.lower()
+            is_common_word = word_lower in ['a', 'i', 'o', 'e', 'u', 'la', 'il', 'lo', 'le', 'gli', 'un', 'una', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra']
+            is_fragment = word.upper() in fragments_to_remove or word.isdigit()
+            
+            if (len(word) > 1 or is_common_word) and not is_fragment:
+                cleaned_words.append(word)
         
         # Ricostruisci il titolo
         name = ' '.join(cleaned_words)
@@ -1358,6 +1588,7 @@ class MKVRenameAssistant:
             name = re.sub(r'\s+', ' ', name).strip()
         
         return name
+
 
     def search_tmdb(self):
         """Cerca su TMDb il titolo specificato"""
@@ -1525,6 +1756,10 @@ class MKVRenameAssistant:
             title = tmdb_result.get("title") or tmdb_result.get("name", "")
             date = tmdb_result.get("release_date") or tmdb_result.get("first_air_date", "")
             year = date.split("-")[0] if date else ""
+            
+            # Salva i dati TMDb temporaneamente per use in generate_name()
+            self._temp_tmdb_title = title
+            self._temp_tmdb_year = year
             
             # Per serie TV, cerca pattern episodio nel nome originale
             original_filename = os.path.basename(self.current_file.get())
