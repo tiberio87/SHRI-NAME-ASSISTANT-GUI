@@ -1492,9 +1492,14 @@ class MKVRenameAssistant:
             # Marker REMUX e non-compresso
             r'\b(?:UNTOUCHED|VU|DOWNCONVERT)\b',
             
+            # Formati video HD (FullHD, HD, SD, etc.)
+            r'\b(?:FullHD|FULLHD|SD|HDReady|HD)\b',
+            
             # Formati video e risoluzioni (PRIMA di HDR/UHD perché sono più specifici)
             r'\b(?:1080p|720p|2160p|480p|540p|8k)\b',
             r'\b(?:h\.?264|h264|x\.?264|x264|h\.?265|h265|x\.?265|x265|avc|hevc|av1|hvec)\b',
+            # Cattura anche il numero isolato che rimane dopo separatori convertiti (es: "H 264" -> "264")
+            r'\b264\b', r'\b265\b',
             
             # HDR e video tech - SEPARATE da risoluzioni per evitare conflitti
             r'\b(?:HDR|HDR10|HLG|DV|DOLBY[-_.]?VISION)\b',  # HDR specifici
@@ -1514,7 +1519,7 @@ class MKVRenameAssistant:
             r'\b(?:AMZN|AMAZON|NETFLIX|NF|DSNP|DISNEY|HULU|ATVP|APPLE|MAX|HBO|PARAMOUNT|PEACOCK|CRUNCHYROLL|FUNIMATION)\b',
             
             # Altri tag
-            r'\b(?:DIRECTOR\'?S?\.?CUT|EXTENDED|THEATRICAL|UNCUT|REMASTERED|CRITERION)\b',
+            r'\b(?:DIRECTOR\'?S?\.?CUT|EXTENDED|THEATRICAL|UNCUT|REMASTERED|CRITERION|RESYNC)\b',
             
             # Anno (dopo aver salvato quello trovato)
             r'\b(19|20)\d{2}\b',
@@ -1523,6 +1528,9 @@ class MKVRenameAssistant:
             r'[-_](?:[A-Za-z0-9]+)$',
             r'\[[^\]]*\]$',
         ]
+        
+        # PRIMA di convertire i separatori, rimuovi i numeri decimali (5.1, 2.0, etc.)
+        name = re.sub(r'\b\d+\.\d+\b', '', name)
         
         # Pulisci separatori e caratteri speciali
         name = re.sub(r'[._\-\(\)\[\]]+', ' ', name)
@@ -1549,30 +1557,64 @@ class MKVRenameAssistant:
             'INTERNAL', 'LIMITED',
         }
         
-        # Rilevi pattern release group (token finale tipicamente 3-4 caratteri maiuscoli)
-        # Es: "Title Something FHC" -> FHC è release group
+        # Rilevi pattern release group (release group è tipicamente alfanumerico maiuscolo alla fine)
+        # Es: "Title Something DDNCREW" -> DDNCREW è release group
+        # Es: "Title Something iSlaNd" -> iSlaNd è release group (mix case)
         words = name.split()
         
-        # Se l'ultima parola è tutta maiuscola e 2-4 caratteri, è probabilmente release group
-        if words and len(words[-1]) <= 4 and words[-1].isupper() and not words[-1].isdigit():
-            # Verifica che non sia un titolo noto breve (es: "SOS")
-            last_word_abbrev = ['FBI', 'CIA', 'NSA', 'USA', 'UK', 'LA', 'NYC', 'DVD', 'DTV', 'OVA']
-            if words[-1] not in last_word_abbrev:
+        # Rimuovi release group dalla fine - Pattern: contiene lettere e/o numeri, 2+ caratteri
+        # Controllo se ultima parola sembra un release group (non tutte minuscole, non è parola comune)
+        if words:
+            last_word = words[-1]
+            last_word_lower = last_word.lower()
+            # È release group se:
+            # 1. È maiuscolo/mixcase (contiene uppercase) E non è parola italiana comune
+            # 2. È lista nota di release groups
+            is_likely_release_group = (
+                (any(c.isupper() for c in last_word) and last_word_lower not in ['a', 'i', 'la', 'di', 'da', 'un']) 
+                or last_word.upper() in release_groups_common
+            )
+            # Escludi parole comuni come "The", "A", etc.
+            is_common_title_word = last_word_lower in ['the', 'a', 'an', 'una', 'un', 'il', 'lo', 'la']
+            
+            if is_likely_release_group and not is_common_title_word and not last_word.isdigit():
                 words.pop()
         
-        # Rimuovi release groups noti dalla fine
-        while words and words[-1].upper() in release_groups_common:
-            words.pop()
-        
         cleaned_words = []
-        for word in words:
+        for idx, word in enumerate(words):
             # Mantieni solo parole significative
-            # Almeno 2 caratteri OPPURE parole comuni italiane monosillabiche
+            # Rimuovi solo: lettere singole (non comuni) oppure frammenti tecnici noti
             word_lower = word.lower()
-            is_common_word = word_lower in ['a', 'i', 'o', 'e', 'u', 'la', 'il', 'lo', 'le', 'gli', 'un', 'una', 'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra']
-            is_fragment = word.upper() in fragments_to_remove or word.isdigit()
             
-            if (len(word) > 1 or is_common_word) and not is_fragment:
+            # Parole comuni italiane/inglesi monosillabiche da mantenere
+            is_common_word = word_lower in [
+                'a', 'i', 'o', 'e', 'u',  # Articoli/preposizioni IT
+                'la', 'il', 'lo', 'le', 'gli',  # Articoli IT
+                'un', 'una', 'uno',  # Articoli indeterminativi IT
+                'di', 'da', 'in', 'con', 'su', 'per', 'tra', 'fra', 'è',  # Preposizioni IT
+                'the', 'a', 'an',  # Articoli EN
+                'of', 'in', 'at', 'by', 'to', 'or', 'as',  # Preposizioni EN
+            ]
+            
+            # Frammenti tecnici da rimuovere (hanno senso solo nel contesto metadata)
+            is_tech_fragment = word.upper() in [
+                'AC', 'DL', 'WEB', 'BD', 'DVD', 'P', 'DDP', 'DD', 'H', 'X', 'MA', 'S', 'RM', 'RIP', 'E',
+                'AVC', 'HEVC', 'H264', 'H265'
+            ]
+            
+            # Mantieni numeri SE:
+            # - all'inizio (es: "12 Rounds") OPPURE
+            # - circondati da parole significative (es: "Rounds 3 Lockdown")
+            is_number = word.isdigit()
+            is_start_number = is_number and idx == 0
+            has_prev_word = idx > 0 and len(words[idx-1]) > 1
+            has_next_word = idx < len(words) - 1 and len(words[idx+1]) > 1
+            is_surrounded_number = is_number and has_prev_word and has_next_word
+            
+            # Rimuovi solo se: parola singola non comune E frammento tecnico
+            should_keep = (len(word) > 1 or is_common_word or is_start_number or is_surrounded_number) and not is_tech_fragment
+            
+            if should_keep:
                 cleaned_words.append(word)
         
         # Ricostruisci il titolo
