@@ -1,1 +1,9 @@
 .venv
+__pycache__/
+*.pyc
+.tmdb_config
+.env
+.env.local
+*.egg-info/
+dist/
+build/

@@ -115,11 +115,32 @@ WEBRip:  x264 encoded → "Title.2024.1080p.NF.WEBRip.DD5.1.x264-Group.mkv"
 
 ## ⚙️ Configurazione
 
-### TMDb API
-L'API key è già configurata. Per personalizzare, modifica in `mkv_rename_assistant.py`:
-```python
-self.TMDB_API_KEY = "your-api-key-here"
-```
+### TMDb API (IMPORTANTE!)
+
+**La chiave TMDb NON deve essere hardcoded nel sorgente.**
+
+L'app supporta **3 modalità** per configurare la chiave (in ordine di priorità):
+
+1. **Variabile d'Ambiente** (Consigliato per CI/CD e Deploy)
+   ```bash
+   export TMDB_API_KEY="your-api-key-here"
+   python mkv_rename_assistant.py
+   ```
+
+2. **File Configurazione Locale** (Per sviluppo locale)
+   ```bash
+   echo "your-api-key-here" > .tmdb_config
+   ```
+
+3. **Dialog Interattivo** (Se non trovata)
+   - L'app chiederà la chiave la prima volta
+   - Salva in `.tmdb_config` (file locale, non committato)
+
+**📖 Vedi [TMDB_SETUP.md](TMDB_SETUP.md) per la documentazione completa** con:
+- Come ottenere la chiave da TMDb
+- Setup per GitHub Actions / CI-CD
+- Protezione della chiave con GitHub Secrets
+- Best practices di sicurezza
 
 ### Regole Naming
 Il file `config.py` contiene:

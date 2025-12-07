@@ -1,0 +1,10 @@
+# TMDb API Configuration
+# 
+# Come ottenere la chiave:
+# 1. Vai su https://www.themoviedb.org/settings/api
+# 2. Crea un account se necessario
+# 3. Richiedi accesso all'API
+# 4. Copia la tua API Key
+# 5. Incollala di seguito:
+
+YOUR_TMDB_API_KEY_HERE

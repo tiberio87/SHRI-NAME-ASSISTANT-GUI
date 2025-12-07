@@ -14,6 +14,28 @@ import json
 import requests
 from config import RENAME_CONFIG, GUI_CONFIG, ERROR_MESSAGES, SUCCESS_MESSAGES
 
+# Load TMDb API key from environment or config file
+def load_tmdb_api_key():
+    """Carica la chiave TMDb da variabile d'ambiente o file config"""
+    # PRIORITÀ 1: Variabile d'ambiente (per deploy/CI-CD)
+    api_key = os.getenv('TMDB_API_KEY', '').strip()
+    if api_key:
+        return api_key
+    
+    # PRIORITÀ 2: File config locale (.env style)
+    config_file = Path(__file__).parent / '.tmdb_config'
+    if config_file.exists():
+        try:
+            with open(config_file, 'r') as f:
+                api_key = f.read().strip()
+                if api_key:
+                    return api_key
+        except Exception:
+            pass
+    
+    # PRIORITÀ 3: Se non trovata, ritorna stringa vuota
+    return ''
+
 
 class MKVRenameAssistant:
     def __init__(self, root):
@@ -34,10 +56,42 @@ class MKVRenameAssistant:
         self.MARKER_PATTERN = re.compile(r"\b(" + "|".join(RENAME_CONFIG["remux_markers"]) + r")\b", re.IGNORECASE)
         self.CINEMA_NEWS_PATTERN = re.compile(r"\b(HDTS|TS|MD|LD|CAM|HDCAM|TC|HDTC)\b", re.IGNORECASE)
         
-        # TMDb API configuration
-        self.TMDB_API_KEY = ""
+        # TMDb API configuration - Carica da ambiente/config o chiedi all'utente
+        self.TMDB_API_KEY = load_tmdb_api_key()
+        
+        # Se non trovata, chiedi all'utente
+        if not self.TMDB_API_KEY:
+            self._prompt_for_tmdb_key()
         
         self.setup_ui()
+    
+    def _prompt_for_tmdb_key(self):
+        """Chiede all'utente di inserire la chiave TMDb se non trovata"""
+        from tkinter import simpledialog
+        
+        msg = "Chiave TMDb non trovata!\n\n" \
+              "Inserisci la tua chiave API TMDb:\n" \
+              "(Puoi ottenerla gratuitamente da https://www.themoviedb.org/settings/api)\n\n" \
+              "La chiave verrà salvata e potrai modificarla dopo."
+        
+        api_key = simpledialog.askstring("TMDb API Key", msg, show='*')
+        
+        if api_key:
+            self.TMDB_API_KEY = api_key.strip()
+            # Salva la chiave nel file .tmdb_config (non committare in git)
+            config_file = Path(__file__).parent / '.tmdb_config'
+            try:
+                with open(config_file, 'w') as f:
+                    f.write(self.TMDB_API_KEY)
+                messagebox.showinfo("Successo", "Chiave TMDb salvata localmente!")
+            except Exception as e:
+                messagebox.showwarning("Avviso", f"Impossibile salvare la chiave: {e}\nVerrà usata solo questa sessione.")
+        else:
+            # L'utente ha cancellato - avvisa che TMDb non funzionerà
+            messagebox.showwarning("Attenzione", 
+                                 "TMDb non sarà disponibile senza una chiave valida.\n"
+                                 "La ricerca TMDb sarà disabilitata.")
+            self.TMDB_API_KEY = ""
         
     def setup_ui(self):
         """Configura l'interfaccia utente"""
@@ -196,6 +250,14 @@ class MKVRenameAssistant:
     def _search_and_select_tmdb(self, title):
         """Cerca su TMDb e permette selezione manuale del risultato corretto"""
         try:
+            # Verifica che la chiave TMDb sia disponibile
+            if not self.TMDB_API_KEY:
+                self.info_text.insert(tk.END, "⚠️ Chiave TMDb non configurata\n")
+                messagebox.showwarning("TMDb Non Disponibile", 
+                                     "La chiave API TMDb non è stata configurata.\n"
+                                     "Puoi comunque generare il nome con le informazioni del file.")
+                return
+            
             content_type = self.content_type.get()
             endpoint = "movie" if content_type == "movie" else "tv"
             
