@@ -5,6 +5,7 @@ __pycache__/
 
 # Virtual environments
 .env
+.env.local
 .venv
 env/
 venv/
@@ -71,3 +72,6 @@ docs/_build/
 # Profile files
 *.prof
 profile.stats
+
+# TMDb Configuration (sensitive - never commit)
+.tmdb_config
