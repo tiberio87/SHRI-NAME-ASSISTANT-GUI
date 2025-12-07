@@ -1227,11 +1227,14 @@ class MKVRenameAssistant:
             return clean_title, None
         
         # PRIORITÀ 2: Analisi del nome file originale (fallback)
+        # Converti punti in spazi per analisi (ma senza modificare il filename originale)
+        filename_normalized = filename.replace('.', ' ')
+        
         # Pattern per serie TV con S01E01 - semplificato senza anno
         series_pattern = r'^(.*?)\s+S(\d+)E(\d+)'  # Titolo S01E01
         
         # Controlla prima se è una serie TV
-        match = re.search(series_pattern, filename, re.IGNORECASE)
+        match = re.search(series_pattern, filename_normalized, re.IGNORECASE)
         if match:
             title = match.group(1).strip()
             season = match.group(2).zfill(2)  # S01
@@ -1242,24 +1245,23 @@ class MKVRenameAssistant:
             
             return title, None  # Nessun anno automatico per serie TV
         
-        # Pattern comuni per film/contenuti normali
+        # Pattern comuni per film/contenuti normali (usa filename_normalized)
         patterns = [
-            r'^(.*?)\.(\d{4})\..*',  # Titolo.Anno.resto
-            r'^(.*?)[\.\s](\d{4})[\.\s].*',  # Titolo Anno resto
+            r'^(.*?)\s+(\d{4})\s+.*',  # Titolo Anno resto (separati da spazi)
             r'^(.*?)[\[\(](\d{4})[\]\)].*',  # Titolo [Anno] resto
         ]
         
         for pattern in patterns:
-            match = re.search(pattern, filename)
+            match = re.search(pattern, filename_normalized)
             if match:
-                title = match.group(1).replace('.', ' ').strip()
+                title = match.group(1).strip()
                 year = match.group(2)
                 return title, year
         
         # Se non trova l'anno, prova solo il titolo
-        title_match = re.search(r'^([^\.]+)', filename)
+        title_match = re.search(r'^([^\s]+.*?)(?:\s|$)', filename_normalized)
         if title_match:
-            title = title_match.group(1).replace('.', ' ').strip()
+            title = title_match.group(1).strip()
             return title, None
             
         return filename, None
@@ -1342,18 +1344,27 @@ class MKVRenameAssistant:
         # 2. ANNO (da TMDb se disponibile, altrimenti dal file)
         year = tmdb_year or ""
         
-        # 3. SERIE TV - aggiunge S01 invece di anno
-        # Estrai stagione dal basename
+        # 3. SERIE TV - aggiunge S01 o S01E01 invece di anno
+        # Estrai stagione ed episodio dal basename
         season_match = re.search(r'S(\d+)', meta.get('basename', ''), re.IGNORECASE)
+        episode_match = re.search(r'E(\d+)', meta.get('basename', ''), re.IGNORECASE)
+        
         if season_match or self._is_tv_series(meta.get('basename', '')):
             # È una serie TV
             if season_match:
                 season_num = season_match.group(1).zfill(2)
+                season_episode = f"S{season_num}"
+                
+                # Aggiungi episodio se presente
+                if episode_match:
+                    episode_num = episode_match.group(1).zfill(2)
+                    season_episode = f"S{season_num}E{episode_num}"
+                
                 # Per serie TV, se abbiamo l'anno da TMDb, lo includiamo prima della stagione
                 if year:
-                    scene_title = f"{title} {year} S{season_num}"
+                    scene_title = f"{title} {year} {season_episode}"
                 else:
-                    scene_title = f"{title} S{season_num}"
+                    scene_title = f"{title} {season_episode}"
             else:
                 scene_title = title
         else:
