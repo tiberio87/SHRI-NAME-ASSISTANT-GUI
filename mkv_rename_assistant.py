@@ -52,7 +52,7 @@ class MKVRenameAssistant:
         self.mediainfo_data = None
         
         # Pattern regex dal codice SHRI
-        self.INVALID_TAG_PATTERN = re.compile(r"-(nogrp|nogroup|unknown|unk)", re.IGNORECASE)
+        self.INVALID_TAG_PATTERN = re.compile(r"^(nogrp|nogroup|unknown|unk)$", re.IGNORECASE)
         self.WHITESPACE_PATTERN = re.compile(r"\s{2,}")
         self.MARKER_PATTERN = re.compile(r"\b(" + "|".join(RENAME_CONFIG["remux_markers"]) + r")\b", re.IGNORECASE)
         self.CINEMA_NEWS_PATTERN = re.compile(r"\b(HDTS|TS|MD|LD|CAM|HDCAM|TC|HDTC)\b", re.IGNORECASE)
@@ -1449,10 +1449,26 @@ class MKVRenameAssistant:
             # Per ENCODE usa x264/x265
             video_codec = self._get_encode_codec(meta)
         
-        # 10. RELEASE GROUP
+        # 10. RELEASE GROUP - Validazione e pulizia da SHRI
         release_group = meta.get('tag', '')
+        
+        # Se non presente, estrai dal basename e valida
         if not release_group:
-            release_group = 'NoGroup'
+            release_group = self._extract_clean_release_group(meta.get('basename', ''))
+        else:
+            # Pulisci il tag da trattini iniziali
+            release_group = release_group.lstrip('-').strip()
+            # Valida: se contiene invalid patterns, sostituisci con NoGroup
+            if self.INVALID_TAG_PATTERN.search(release_group):
+                release_group = 'NoGroup'
+        
+        # 10b. RILEVAMENTO REMUX da markers (VU, UNTOUCHED, etc.)
+        basename = meta.get('basename', '')
+        has_remux_marker = self.MARKER_PATTERN.search(basename) is not None
+        if has_remux_marker and meta.get('type') != 'REMUX':
+            # Se rilevi REMUX marker nel filename, aggiungi al source
+            if 'REMUX' not in source_str:
+                source_str = f"{source_str} REMUX"
         
         # ASSEMBLA IL TITOLO FINALE
         scene_parts = [scene_title]
@@ -1471,7 +1487,88 @@ class MKVRenameAssistant:
         
         scene_parts.append(f"{video_codec}-{release_group}")
         
-        return " ".join(scene_parts)
+        final_title = " ".join(scene_parts)
+        
+        # Pulisci spazi multipli (da SHRI WHITESPACE_PATTERN)
+        final_title = self.WHITESPACE_PATTERN.sub(" ", final_title).strip()
+        
+        return final_title
+
+    def _extract_clean_release_group(self, basename):
+        """
+        Estrae e valida il release group dal basename seguendo le regole SHRI.
+        Accetta solo tag validi, altrimenti ritorna 'NoGroup'
+        
+        Logica:
+        1. Estrai l'ultima parte dopo - (hyphen) se presente
+        2. Se contiene REMUX markers (VU, UNTOUCHED, etc.), usa il marker come tag
+        3. Altrimenti prova l'ultima parte separata da .
+        4. Valida che non sia un tag non valido (nogroup, nogrp, unknown, unk)
+        5. Valida lunghezza e caratteri alfanumerici
+        """
+        if not basename:
+            return 'NoGroup'
+        
+        # Rimuovi estensione file (solo estensioni note)
+        # splitext è problematico per file come "x264-GROUP.mkv" perché vede ".x264-GROUP" come estensione
+        name_no_ext = basename
+        for ext in ['.mkv', '.avi', '.mp4', '.mov', '.flv', '.wmv', '.webm', '.m4v']:
+            if basename.lower().endswith(ext):
+                name_no_ext = basename[:-len(ext)]
+                break
+        
+        # PRIORITY 1: Cerca formato "something-RELEASEGRP" (hyphen + release group alla fine)
+        # Questo è il formato più comune per release group
+        if '-' in name_no_ext:
+            parts = name_no_ext.rsplit('-', 1)  # Split dall'ultima occorrenza
+            if len(parts) == 2:
+                potential_tag = parts[1].strip()
+                
+                # Se è un formato valido (alfanumerico, non troppo lungo)
+                if potential_tag and len(potential_tag) <= 30 and potential_tag.replace('_', '').isalnum():
+                    # Valida che non sia un tag non valido
+                    if not self.INVALID_TAG_PATTERN.search(potential_tag):
+                        return potential_tag
+        
+        # PRIORITY 2: Se contiene REMUX markers, usali come tag
+        # (VU1080, VU720, VU, UNTOUCHED, REMUX, etc.)
+        marker_match = self.MARKER_PATTERN.search(name_no_ext)
+        if marker_match:
+            marker_tag = marker_match.group(1)
+            if marker_tag and marker_tag.replace('_', '').isalnum() and len(marker_tag) <= 30:
+                return marker_tag
+        
+        # PRIORITY 3: Se nessun hyphen o estrazione fallita, estrai l'ultima parola separata da .
+        # MA solo se sembra un release group valido (non solo parole generiche)
+        parts = name_no_ext.split('.')
+        
+        if not parts:
+            return 'NoGroup'
+        
+        potential_tag = parts[-1].strip()
+        
+        # Se la parte è "Movie" o altre parole comuni senza pattern, è il titolo, non un release group
+        # Release group devono avere almeno uno di questi: numeri, hyphen, underscore, etc.
+        # Accetta solo se ha almeno un numero o è un release group noto
+        if potential_tag and not any(c.isdigit() or c in ('_', '-') for c in potential_tag):
+            # Nessun numero, hyphen o underscore - probabilmente è il titolo
+            return 'NoGroup'
+        
+        # Validazioni:
+        # 1. Non vuoto
+        # 2. Non più lungo di 30 caratteri
+        # 3. Solo caratteri alfanumerici e underscore
+        # 4. Non corrisponde ai tag non validi (nogroup, etc.)
+        if (not potential_tag 
+            or len(potential_tag) > 30 
+            or not potential_tag.replace('_', '').isalnum()):
+            return 'NoGroup'
+        
+        # Controlla se è un tag non valido (nogroup, nogrp, unknown, unk)
+        if self.INVALID_TAG_PATTERN.search(potential_tag):
+            return 'NoGroup'
+        
+        return potential_tag
 
     def _normalize_title_for_search(self, filename):
         """Normalizza il nome del file per la ricerca TMDb con pulizia più aggressiva"""
