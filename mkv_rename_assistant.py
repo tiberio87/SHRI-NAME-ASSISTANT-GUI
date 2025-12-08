@@ -1591,51 +1591,48 @@ class MKVRenameAssistant:
         return potential_tag
 
     def _normalize_title_for_search(self, filename):
-        """Normalizza il nome del file per la ricerca TMDb con pulizia aggressiva"""
+        """Normalizza il nome del file per la ricerca TMDb usando approccio year-based"""
         # Rimuovi estensione
         name = os.path.splitext(filename)[0]
         
-        # PRIMA di convertire i separatori, rimuovi i numeri decimali (5.1, 2.0, etc.)
+        # Rimuovi numeri decimali audio (5.1, 2.0, etc.)
         name = re.sub(r'\b\d+\.\d+\b', '', name)
         
         # Pulisci separatori e caratteri speciali
         name = re.sub(r'[._\-\(\)\[\]]+', ' ', name)
         
-        # Rimuovi pattern comuni - ordine specifico per evitare frammenti
+        # CERCA L'ANNO nel nome pulito (chiave di separazione titolo/metadata)
+        year_match = re.search(r'\b(19|20)\d{2}\b', name)
+        
+        if year_match:
+            # Titolo GREZZO = tutto prima dell'anno
+            title_raw = name[:year_match.start()].strip()
+            has_year = True
+        else:
+            # Niente anno, usa tutto il nome
+            title_raw = name.strip()
+            has_year = False
+        
+        # Pulisci il titolo dai pattern comuni
         tag_patterns = [
-            # ANNI - rimuovi subito (anche tra parentesi)
-            r'\b(19|20)\d{2}\b',
-            
-            # Audio codec (SPECIFICI per evitare conflitti)
-            r'\bE[-]?AC[-]?3\b',    # E-AC-3, E-AC3, EAC-3, EAC3
-            r'\bAC[-]?3\b',         # AC-3, AC3
-            r'\bDDP\b',
-            r'\bDD[\+]?\b',         # DD+, DD
-            r'\bDTS[-]?HD\.?MA\b',
-            r'\bDTS[-]?HD\b',
-            r'\bDTS\b',
-            r'\bTrueHD\b',
-            r'\bATMOS\b',
-            r'\bAAC\b',
-            r'\bFLAC\b',
+            # Audio codec
+            r'\bE[-]?AC[-]?3\b', r'\bAC[-]?3\b', r'\bDDP\b', r'\bDD[\+]?\b',
+            r'\bDTS[-]?HD\.?MA\b', r'\bDTS[-]?HD\b', r'\bDTS\b', r'\bTrueHD\b',
+            r'\bATMOS\b', r'\bAAC\b', r'\bFLAC\b',
             
             # Marker REMUX, VU, etc.
             r'\b(?:UNTOUCHED|VU|DOWNCONVERT)\b',
             r'\b(?:REMUX|BDREMUX|DLMUX|WEBMUX)\b',
             
-            # Formati video - specifici e risoluzioni
+            # Formati video e risoluzioni
             r'\b(?:2160p|1080p|720p|480p|540p|8k|4k)\b',
-            r'\b(?:FullHD|FULLHD|Full[-]?HD)\b',  # Cattura varianti FullHD
-            r'\b(?:h[-]?264|x[-]?264)\b',
-            r'\b(?:h[-]?265|x[-]?265|hevc)\b',
+            r'\b(?:FullHD|FULLHD|Full[-]?HD)\b',
+            r'\b(?:h[-]?264|x[-]?264)\b', r'\b(?:h[-]?265|x[-]?265|hevc)\b',
             r'\b(?:avc|av1|hvec)\b',
-            r'\bSD\b',
-            r'\bHDReady\b',
-            r'\bHD\b',
+            r'\bSD\b', r'\bHDReady\b', r'\bHD\b',
             
             # HDR e video tech
-            r'\b(?:HDR10|HDR)\b',
-            r'\b(?:DV|DOLBY[-_.]?VISION)\b',
+            r'\b(?:HDR10|HDR)\b', r'\b(?:DV|DOLBY[-_.]?VISION)\b',
             r'\b(?:HLG|SDR|REC[-.]?709|REC[-.]?2020|BT[-.]?709|BT[-.]?2020)\b',
             
             # Tipi di release
@@ -1654,77 +1651,57 @@ class MKVRenameAssistant:
             # Servizi streaming
             r'\b(?:AMZN|AMAZON|NETFLIX|NF|DSNP|DISNEY|HULU|ATVP|APPLE|MAX|HBO|PARAMOUNT|PEACOCK|CRUNCHYROLL|FUNIMATION)\b',
             
-            # Parole isolate tech rimaste (FULL da ultimo)
-            r'\bBD\b',
-            r'\bFULL\b',
-            r'\bE\b',  # Lettera singola rimasta
-            r'\bDL\b',
+            # Frammenti isolati rimasti
+            r'\bBD\b', r'\bFULL\b', r'\bE\b', r'\bDL\b',
             
-            # Caratteri speciali rimasti
+            # Caratteri speciali
             r'[\+/]',
         ]
         
-        # Applica i pattern regex
+        # Applica i pattern al titolo grezzo
+        title_cleaned = title_raw
         for pattern in tag_patterns:
-            name = re.sub(pattern, '', name, flags=re.IGNORECASE)
+            title_cleaned = re.sub(pattern, '', title_cleaned, flags=re.IGNORECASE)
         
-        # Pulisci spazi multipli dopo rimozione pattern
-        name = re.sub(r'\s+', ' ', name).strip()
+        # Pulisci spazi multipli
+        title_cleaned = re.sub(r'\s+', ' ', title_cleaned).strip()
         
-        # Rimuovi release groups comuni dalla fine
-        words = name.split()
-        if words and len(words) > 1:  # Non rimuovere se rimane solo 1 parola
-            last_word = words[-1]
-            last_word_lower = last_word.lower()
-            
-            # Parole comuni che NON sono release groups
-            common_title_words = [
-                'the', 'a', 'an', 'una', 'un', 'uno', 'uno', 'una',
-                'il', 'lo', 'la', 'le', 'gli', 'i',
-                'di', 'da', 'in', 'con', 'del', 'della', 'dello', 'dei', 'delle', 'degl',
-                'nel', 'nella', 'nello', 'nei', 'nelle',
-                'al', 'alla', 'allo', 'ai', 'alle',
-                'and', 'or', 'but', 'by', 'for', 'to', 'as', 'at', 'be', 'is', 'are',
-                'freud', 'comandante',  # Nomi propri comuni come titoli di film
-            ]
-            
-            has_uppercase = any(c.isupper() for c in last_word)
-            is_common_title_word = last_word_lower in common_title_words
-            is_digit_only = last_word.isdigit()
-            has_digits = any(c.isdigit() for c in last_word)
-            has_lowercase = any(c.islower() for c in last_word)
-            
-            # È release group se TUTTI questi:
-            # 1. Ha uppercase E NON è parola comune
-            # 2. Oppure: ha numeri+minuscole (ciano54, ZioRip pattern)
-            # 3. Non è solo cifre
-            # 4. Lunghezza >= 2
-            looks_like_group = (
-                len(last_word) >= 2
-                and not is_digit_only
-                and not is_common_title_word
-                and (
-                    (has_uppercase and (has_digits or has_lowercase))  # Almeno una maiuscola + altro
-                    or (has_digits and has_lowercase and not has_uppercase)  # ciano54 pattern
+        # Rileva e rimuovi release group SOLO se non abbiamo anno (logica fallback)
+        # Se c'è anno, il titolo è definito chiaramente: tutto quello prima
+        if not has_year:
+            words = title_cleaned.split()
+            if words:
+                last_word = words[-1]
+                has_uppercase = any(c.isupper() for c in last_word)
+                has_digits = any(c.isdigit() for c in last_word)
+                has_lowercase = any(c.islower() for c in last_word)
+                is_digit_only = last_word.isdigit()
+                
+                # Release group: (maiuscola + altro) OR (numeri + minuscole)
+                looks_like_group = (
+                    len(last_word) >= 2
+                    and not is_digit_only
+                    and (
+                        (has_uppercase and (has_digits or has_lowercase))
+                        or (has_digits and has_lowercase and not has_uppercase)
+                    )
                 )
-            )
+                
+                if looks_like_group:
+                    words.pop()
             
-            if looks_like_group:
-                words.pop()
+            title_cleaned = ' '.join(words).strip()
         
-        # Ricostruisci il titolo
-        name = ' '.join(words)
+        # Pulisci spazi finali
+        result = re.sub(r'\s+', ' ', title_cleaned).strip()
         
-        # Pulisci spazi multipli e trim finali
-        name = re.sub(r'\s+', ' ', name).strip()
+        # Fallback se risultato vuoto
+        if not result or len(result) < 2:
+            result = os.path.splitext(filename)[0]
+            result = re.sub(r'[._-]', ' ', result)
+            result = re.sub(r'\s+', ' ', result).strip()
         
-        # Se il risultato è vuoto o troppo corto, usa il nome originale minimalista
-        if not name or len(name) < 3:
-            name = os.path.splitext(filename)[0]
-            name = re.sub(r'[._-]', ' ', name)
-            name = re.sub(r'\s+', ' ', name).strip()
-        
-        return name
+        return result
 
 
     def search_tmdb(self):
